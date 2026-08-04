@@ -1,0 +1,28 @@
+[env]
+AWS_PROFILE = 'learn'
+AWS_DEFAULT_REGION = 'ap-northeast-1'
+
+[tasks."aws:login"]
+run = "aws sso login"
+
+[tasks."aws:check"]
+run = "aws sts get-caller-identity"
+
+[tasks."aws:s3:list"]
+run = "aws s3 ls"
+
+[tasks."aws:s3:sync"]
+dir = "{{config_root}}"
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+S3_BUCKET=$(aws s3 ls | awk '{print $3}' | grep '^aws-static-site-')
+aws s3 sync dist "s3://${S3_BUCKET}" --delete
+'''
+[tasks."aws:open"]
+dir = "./infra"
+run = 'open "https://$(terraform output -raw cloudfront_domain)"'
+
+[tasks."terraform:check"]
+dir = "./infra"
+run = ["terraform fmt -recursive", "terraform validate"]
