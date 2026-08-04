@@ -31,3 +31,12 @@ dist-ssr
 # Vite specific env files
 .env.production
 .env.development
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
