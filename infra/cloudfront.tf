@@ -1,4 +1,3 @@
-# OAC: CloudFront → S3 のアクセスを SigV4 署名で許可する仕組み
 resource "aws_cloudfront_origin_access_control" "frontend" {
   name                              = "frontend-oac"
   origin_access_control_origin_type = "s3"
@@ -9,7 +8,7 @@ resource "aws_cloudfront_origin_access_control" "frontend" {
 resource "aws_cloudfront_distribution" "frontend" {
   enabled             = true
   default_root_object = "index.html"
-  price_class         = "PriceClass_200" # 日本を含むリージョン。学習用ならこれで十分
+  price_class         = "PriceClass_200" # 日本を含むエッジロケーション
 
   origin {
     domain_name              = aws_s3_bucket.frontend.bucket_regional_domain_name
@@ -23,11 +22,10 @@ resource "aws_cloudfront_distribution" "frontend" {
     allowed_methods        = ["GET", "HEAD"]
     cached_methods         = ["GET", "HEAD"]
 
-    # AWS 管理のキャッシュポリシー "CachingOptimized"
-    cache_policy_id = "658327ea-f89d-4fab-a63d-7e88639e58f6"
+    cache_policy_id = "658327ea-f89d-4fab-a63d-7e88639e58f6" # AWS 管理の CachingOptimized
   }
 
-  # SPA の場合: 存在しないパスへの直アクセスを index.html に返す
+  # SPA のクライアントルーティング用に未知のパスを index.html へ返す
   custom_error_response {
     error_code         = 403
     response_code      = 200
@@ -41,11 +39,10 @@ resource "aws_cloudfront_distribution" "frontend" {
   }
 
   viewer_certificate {
-    cloudfront_default_certificate = true # *.cloudfront.net ドメインを使う場合
+    cloudfront_default_certificate = true
   }
 }
 
-# S3 バケットポリシー: 「この CloudFront ディストリビューションからだけ読める」
 resource "aws_s3_bucket_policy" "frontend" {
   bucket = aws_s3_bucket.frontend.id
   policy = jsonencode({
