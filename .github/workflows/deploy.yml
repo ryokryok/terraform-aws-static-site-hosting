@@ -1,0 +1,143 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# OIDC トークンの発行には id-token: write が必須
+permissions:
+  id-token: write
+  contents: read
+
+# apply 同士が競合しないよう直列化する。実行中のものはキャンセルしない
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-northeast-1
+  TERRAFORM_VERSION: 1.15.8
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./infra
+    outputs:
+      s3_bucket: ${{ steps.tf_output.outputs.s3_bucket }}
+      distribution_id: ${{ steps.tf_output.outputs.distribution_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # infra/ に差分がある場合のみ fmt / validate / apply を走らせる
+      - name: Detect infra changes
+        id: changes
+        working-directory: .
+        run: |
+          before='${{ github.event.before }}'
+          if [ '${{ github.event_name }}' != 'push' ] || [ -z "$before" ] ||
+             [ "$before" = '0000000000000000000000000000000000000000' ]; then
+            echo 'infra=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --quiet "$before" '${{ github.sha }}' -- infra/; then
+            echo 'infra=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'infra=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Terraform fmt
+        if: steps.changes.outputs.infra == 'true'
+        run: terraform fmt -check -recursive
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.TF_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform init
+        run: terraform init -input=false
+
+      - name: Terraform validate
+        if: steps.changes.outputs.infra == 'true'
+        run: terraform validate
+
+      # -detailed-exitcode: 0=差分なし / 1=エラー / 2=差分あり
+      - name: Terraform plan
+        id: plan
+        if: steps.changes.outputs.infra == 'true'
+        run: |
+          set +e
+          terraform plan -input=false -lock-timeout=5m -detailed-exitcode -out=tfplan
+          code=$?
+          set -e
+          case "$code" in
+            0) echo 'changes=false' >> "$GITHUB_OUTPUT" ;;
+            2) echo 'changes=true'  >> "$GITHUB_OUTPUT" ;;
+            *) exit "$code" ;;
+          esac
+
+      - name: Terraform apply
+        if: steps.plan.outputs.changes == 'true'
+        run: terraform apply -input=false -lock-timeout=5m -auto-approve tfplan
+
+      # デプロイ先はハードコードせず state から取得する。
+      # バケット名にアカウントIDが含まれるのでログ出力をマスクする
+      - name: Read outputs
+        id: tf_output
+        run: |
+          bucket=$(terraform output -raw s3_bucket)
+          distribution_id=$(terraform output -raw cloudfront_distribution_id)
+          echo "::add-mask::$bucket"
+          echo "s3_bucket=$bucket" >> "$GITHUB_OUTPUT"
+          echo "distribution_id=$distribution_id" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: terraform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
+      # OIDC で一時認証情報を取得する。アクセスキーは保存しない
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Sync to S3
+        env:
+          S3_BUCKET: ${{ needs.terraform.outputs.s3_bucket }}
+        run: |
+          echo "::add-mask::$S3_BUCKET"
+          aws s3 sync ./dist "s3://$S3_BUCKET" --delete
+
+      - name: Invalidate CloudFront
+        env:
+          DISTRIBUTION_ID: ${{ needs.terraform.outputs.distribution_id }}
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "$DISTRIBUTION_ID" \
+            --paths '/*'
