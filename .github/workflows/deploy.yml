@@ -94,11 +94,17 @@ jobs:
         run: terraform apply -input=false -lock-timeout=5m tfplan
 
       # デプロイ先はハードコードせず state から取得する。
-      # add-mask した値は job output に設定できない（GitHub が破棄する）ため
-      # ここではマスクしない。バケット名にアカウントIDが含まれるが、
-      # backend のバケット名も infra/main.tf に直書きしており秘匿情報ではない
+      #
+      # plan / apply が失敗してもデプロイ先自体は state から読めるため、
+      # !cancelled() でここは止めない。フロントのデプロイを infra の失敗に
+      # 巻き込ませないための措置。
+      #
+      # なお add-mask した値は job output に設定できない（GitHub が破棄する）
+      # のでマスクはしない。バケット名にアカウントIDが含まれるが、backend の
+      # バケット名も infra/main.tf に直書きしており秘匿情報として扱っていない
       - name: Read outputs
         id: tf_output
+        if: "!cancelled()"
         run: |
           {
             echo "s3_bucket=$(terraform output -raw s3_bucket)"
@@ -132,8 +138,14 @@ jobs:
 
   deploy:
     needs: [terraform, check]
+    # terraform ジョブの失敗ではフロントのデプロイを止めない。
+    # デプロイ先が取得できていれば（= state に到達できていれば）実行する。
     # infra 変更でバケットが作り直された場合も再同期が要るため infra も条件に含める
-    if: needs.terraform.outputs.frontend == 'true' || needs.terraform.outputs.infra == 'true'
+    if: >-
+      !cancelled()
+      && needs.check.result == 'success'
+      && needs.terraform.outputs.s3_bucket != ''
+      && (needs.terraform.outputs.frontend == 'true' || needs.terraform.outputs.infra == 'true')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
