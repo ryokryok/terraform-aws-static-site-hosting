@@ -3,7 +3,6 @@ name: Deploy
 on:
   push:
     branches: [main]
-  workflow_dispatch:
 
 # OIDC トークンの発行には id-token: write が必須
 permissions:
@@ -28,14 +27,13 @@ jobs:
     outputs:
       s3_bucket: ${{ steps.tf_output.outputs.s3_bucket }}
       distribution_id: ${{ steps.tf_output.outputs.distribution_id }}
-      frontend: ${{ steps.targets.outputs.frontend }}
-      infra: ${{ steps.targets.outputs.infra }}
+      frontend: ${{ steps.changes.outputs.frontend }}
+      infra: ${{ steps.changes.outputs.infra }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Detect changes
         id: changes
-        if: github.event_name != 'workflow_dispatch'
         uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         with:
           filters: |
@@ -50,24 +48,13 @@ jobs:
               - 'package.json'
               - 'pnpm-lock.yaml'
 
-      # 手動実行は差分を判定できないため常に対象とみなす。
-      # ジョブ内からは job outputs を参照できないのでここで一度確定させる
-      - name: Resolve targets
-        id: targets
-        working-directory: .
-        run: |
-          {
-            echo 'infra=${{ github.event_name == 'workflow_dispatch' || steps.changes.outputs.infra == 'true' }}'
-            echo 'frontend=${{ github.event_name == 'workflow_dispatch' || steps.changes.outputs.frontend == 'true' }}'
-          } >> "$GITHUB_OUTPUT"
-
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
       - name: Terraform fmt
-        if: steps.targets.outputs.infra == 'true'
+        if: steps.changes.outputs.infra == 'true'
         run: terraform fmt -check -recursive
 
       - name: Configure AWS credentials
@@ -80,17 +67,17 @@ jobs:
         run: terraform init -input=false
 
       - name: Terraform validate
-        if: steps.targets.outputs.infra == 'true'
+        if: steps.changes.outputs.infra == 'true'
         run: terraform validate
 
       - name: Terraform plan
-        if: steps.targets.outputs.infra == 'true'
+        if: steps.changes.outputs.infra == 'true'
         run: terraform plan -input=false -lock-timeout=5m -out=tfplan
 
       # 保存済みプランの適用は確認を求められないため -auto-approve は不要。
       # 差分がなければ no-op で終わる
       - name: Terraform apply
-        if: steps.targets.outputs.infra == 'true'
+        if: steps.changes.outputs.infra == 'true'
         run: terraform apply -input=false -lock-timeout=5m tfplan
 
       # デプロイ先はハードコードせず state から取得する。

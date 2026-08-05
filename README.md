@@ -48,7 +48,9 @@ state は S3 で共有されており、ローカルと CI が同じものを参
 
 ## デプロイ
 
-`main` への push で `.github/workflows/deploy.yml` が動く。`infra/**` に差分があれば Terraform を、フロントエンドに差分があればビルドと S3 同期・CloudFront 無効化を実行する。手動実行（workflow_dispatch）では常に両方が対象になる。
+`main` への push で `.github/workflows/deploy.yml` が動く。`infra/**` に差分があれば Terraform を、フロントエンドに差分があればビルドと S3 同期・CloudFront 無効化を実行する。
+
+手動実行のトリガーは持たせていない。再デプロイしたい場合は Actions 画面から過去のランを re-run する（`gh run rerun <run-id>` でも可）。差分判定はそのランのコミットに対して再計算されるため、デプロイまで到達したランを選べば同じ内容が再度反映される。
 
 ロール ARN はリポジトリ変数 `TF_ROLE_ARN` / `DEPLOY_ROLE_ARN` で設定する。
 
