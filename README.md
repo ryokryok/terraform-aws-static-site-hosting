@@ -52,7 +52,19 @@ state は S3 で共有されており、ローカルと CI が同じものを参
 
 手動実行のトリガーは持たせていない。再デプロイしたい場合は Actions 画面から過去のランを re-run する（`gh run rerun <run-id>` でも可）。差分判定はそのランのコミットに対して再計算されるため、デプロイまで到達したランを選べば同じ内容が再度反映される。
 
-ロール ARN はリポジトリ変数 `TF_ROLE_ARN` / `DEPLOY_ROLE_ARN` で設定する。
+PR に `infra/**` の差分があると `terraform-plan.yml` が動き、plan の結果が PR にコメントされる。読み取り専用ロールで実行するため、この時点で AWS が変更されることはない。
+
+### ロール構成
+
+| ロール                           | 信頼する OIDC の `sub`             | 権限                                |
+| -------------------------------- | ---------------------------------- | ----------------------------------- |
+| `github-actions-terraform-plan`  | `pull_request` / `refs/heads/main` | 読み取りのみ                        |
+| `github-actions-terraform-apply` | `environment:production`           | 書き込み。自身の変更は明示的に Deny |
+| `github-actions-deploy`          | `refs/heads/main`                  | S3 同期と CloudFront 無効化         |
+
+ARN はリポジトリ変数 `TF_PLAN_ROLE_ARN` / `TF_APPLY_ROLE_ARN` / `DEPLOY_ROLE_ARN` で設定する。
+
+apply ロールは `github-actions-*` のロールを操作できるが、自分自身への `UpdateAssumeRolePolicy` や `PutRolePolicy` は明示 Deny で塞いである。信頼ポリシーを書き換えて任意の sub から Assume できるようにする経路を断つため。この結果 apply ロール自体の変更は CI からは行えず、ローカルの管理者権限で apply する必要がある。
 
 ## 補足
 
