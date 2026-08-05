@@ -26,3 +26,11 @@ run = 'open "https://$(terraform output -raw cloudfront_domain)"'
 [tasks."terraform:check"]
 dir = "./infra"
 run = ["terraform fmt -recursive", "terraform validate"]
+
+# state バケットの存在確認。バケット名は backend ブロックから取る
+[tasks."terraform:state:check"]
+dir = "{{config_root}}"
+run = '''
+bucket=$(awk -F'"' '/^ *bucket *=/ {print $2; exit}' infra/main.tf)
+aws s3api head-bucket --bucket "$bucket"
+'''

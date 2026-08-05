@@ -38,5 +38,7 @@ dist-ssr
 *.tfstate.*
 *.tfvars
 *.tfvars.json
+tfplan
+*.tfplan
 crash.log
 crash.*.log
