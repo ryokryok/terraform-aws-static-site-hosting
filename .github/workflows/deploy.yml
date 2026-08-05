@@ -83,24 +83,15 @@ jobs:
         if: steps.targets.outputs.infra == 'true'
         run: terraform validate
 
-      # -detailed-exitcode: 0=差分なし / 1=エラー / 2=差分あり
       - name: Terraform plan
-        id: plan
         if: steps.targets.outputs.infra == 'true'
-        run: |
-          set +e
-          terraform plan -input=false -lock-timeout=5m -detailed-exitcode -out=tfplan
-          code=$?
-          set -e
-          case "$code" in
-            0) echo 'changes=false' >> "$GITHUB_OUTPUT" ;;
-            2) echo 'changes=true'  >> "$GITHUB_OUTPUT" ;;
-            *) exit "$code" ;;
-          esac
+        run: terraform plan -input=false -lock-timeout=5m -out=tfplan
 
+      # 保存済みプランの適用は確認を求められないため -auto-approve は不要。
+      # 差分がなければ no-op で終わる
       - name: Terraform apply
-        if: steps.plan.outputs.changes == 'true'
-        run: terraform apply -input=false -lock-timeout=5m -auto-approve tfplan
+        if: steps.targets.outputs.infra == 'true'
+        run: terraform apply -input=false -lock-timeout=5m tfplan
 
       # デプロイ先はハードコードせず state から取得する。
       # バケット名にアカウントIDが含まれるのでログ出力をマスクする
