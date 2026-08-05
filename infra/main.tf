@@ -23,12 +23,28 @@ terraform {
 # profile は指定しない。ローカルは mise が設定する AWS_PROFILE、
 # CI は OIDC で発行された環境変数の認証情報がそれぞれ使われる。
 # ここに profile を書くと CI 側で "failed to get shared config profile" になる
+# 全リソースに共通タグを付ける。コスト配分と、手動で作られたものとの区別に使う
+locals {
+  default_tags = {
+    Project   = "terraform-aws-static-site-hosting"
+    ManagedBy = "terraform"
+  }
+}
+
 provider "aws" {
   region = "ap-northeast-1"
+
+  default_tags {
+    tags = local.default_tags
+  }
 }
 
 # 独自ドメイン用の ACM 証明書は us-east-1 でしか発行できない
 provider "aws" {
   alias  = "us_east_1"
   region = "us-east-1"
+
+  default_tags {
+    tags = local.default_tags
+  }
 }

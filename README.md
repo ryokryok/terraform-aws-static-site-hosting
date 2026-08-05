@@ -2,6 +2,91 @@
 
 S3 + CloudFront による静的サイトホスティング。インフラは Terraform、デプロイは GitHub Actions（OIDC）で管理している。
 
+## 構成
+
+### 配信経路
+
+```mermaid
+flowchart LR
+    User(["ユーザー"])
+
+    subgraph AWS["AWS"]
+        subgraph Edge["CloudFront"]
+            CF["ディストリビューション<br/>圧縮 / セキュリティヘッダ"]
+            Fn["CloudFront Function<br/>拡張子なしのパスを<br/>/index.html へ書き換え"]
+        end
+
+        S3[("S3<br/>パブリックアクセス全ブロック")]
+        CWL[("CloudWatch Logs<br/>アクセスログ 30日")]
+    end
+
+    User -->|"HTTPS"| CF
+    CF -->|"viewer-request"| Fn
+    CF -->|"OAC / SigV4 署名"| S3
+    CF -.->|"配信ログ"| CWL
+```
+
+S3 はバケットポリシーで、この CloudFront ディストリビューションからの署名付きリクエストのみを許可している。バケットに直接アクセスする経路は存在しない。
+
+### CI/CD
+
+```mermaid
+flowchart TD
+    PR["PR<br/>infra/** に差分"] --> Plan["terraform-plan.yml"]
+    Plan -->|"読み取り専用ロール"| PlanOut["plan の差分を<br/>PR にコメント"]
+
+    Merge["main への push"] --> Deploy["deploy.yml"]
+
+    Deploy --> Detect["変更検出<br/>paths-filter"]
+    Detect --> TF["terraform<br/>fmt / validate / plan"]
+    Detect --> Check["check<br/>fmt / lint / typecheck"]
+
+    TF -->|"infra に差分あり"| Apply["terraform-apply<br/>environment: production"]
+    TF --> Dep["deploy"]
+    Check --> Dep
+
+    Dep --> Build["pnpm build"]
+    Build --> Sync["S3 同期<br/>Cache-Control 付与"]
+    Sync --> Inv["CloudFront 無効化<br/>エントリポイントのみ"]
+```
+
+`deploy` は `terraform` の**成功**ではなく**デプロイ先の取得**に依存する。インフラの適用が失敗してもフロントエンドのリリースは止まらない。
+
+### IAM
+
+```mermaid
+flowchart LR
+    subgraph GH["GitHub Actions"]
+        JobPlan["plan ジョブ"]
+        JobApply["apply ジョブ"]
+        JobDeploy["deploy ジョブ"]
+    end
+
+    OIDC{{"OIDC プロバイダ<br/>sub を完全一致で検証"}}
+
+    subgraph Roles["IAM ロール"]
+        RPlan["terraform-plan<br/>読み取りのみ"]
+        RApply["terraform-apply<br/>書き込み"]
+        RDeploy["deploy<br/>S3 同期 + 無効化"]
+    end
+
+    Boundary["permissions boundary<br/>IAM 書き込みを含まない"]
+
+    JobPlan -->|"pull_request<br/>refs/heads/main"| OIDC
+    JobApply -->|"environment:production"| OIDC
+    JobDeploy -->|"refs/heads/main"| OIDC
+
+    OIDC --> RPlan
+    OIDC --> RApply
+    OIDC --> RDeploy
+
+    Boundary -.->|"上限を規定"| RPlan
+    Boundary -.->|"上限を規定"| RDeploy
+    RApply -->|"自己変更は明示 Deny"| RApply
+```
+
+アクセスキーは保存していない。ロールごとに信頼する `sub` が異なり、実行文脈が変われば Assume できない。
+
 ## 必要なもの
 
 - [mise](https://mise.jdx.dev/)（`AWS_PROFILE=learn` などの環境変数を設定する）
@@ -77,6 +162,18 @@ boundary には **IAM の書き込みを含めていない**。apply ロール�
 apply ロール自身には boundary を付けない（IAM 操作が必要なため）。上記1で保護している。
 
 この設計の帰結として、**apply ロール自体と boundary ポリシーの変更は CI からは行えない**。変更する場合はローカルの管理者権限で `terraform apply` する。
+
+## 現時点で入れていないもの
+
+学習用リポジトリとして意図的に見送っている、あるいはプランの制約で入れられない項目。
+
+| 項目                             | 理由                                                                                           |
+| -------------------------------- | ---------------------------------------------------------------------------------------------- |
+| 独自ドメイン + ACM 証明書        | ドメイン未取得。`us_east_1` プロバイダエイリアスは用意済み                                     |
+| Environment の承認者ゲート       | private リポジトリでは GitHub Pro 以上が必要。ブランチポリシーで `main` に限定して代替している |
+| CloudWatch アラームと通知        | 通知先が必要。現状は 5xx の増加に気づく手段がない                                              |
+| WAF                              | 静的サイトでは費用に見合いにくい                                                               |
+| state バケットの別アカウント分離 | 単一アカウント運用のため                                                                       |
 
 ## 補足
 
