@@ -94,15 +94,16 @@ jobs:
         run: terraform apply -input=false -lock-timeout=5m tfplan
 
       # デプロイ先はハードコードせず state から取得する。
-      # バケット名にアカウントIDが含まれるのでログ出力をマスクする
+      # add-mask した値は job output に設定できない（GitHub が破棄する）ため
+      # ここではマスクしない。バケット名にアカウントIDが含まれるが、
+      # backend のバケット名も infra/main.tf に直書きしており秘匿情報ではない
       - name: Read outputs
         id: tf_output
         run: |
-          bucket=$(terraform output -raw s3_bucket)
-          distribution_id=$(terraform output -raw cloudfront_distribution_id)
-          echo "::add-mask::$bucket"
-          echo "s3_bucket=$bucket" >> "$GITHUB_OUTPUT"
-          echo "distribution_id=$distribution_id" >> "$GITHUB_OUTPUT"
+          {
+            echo "s3_bucket=$(terraform output -raw s3_bucket)"
+            echo "distribution_id=$(terraform output -raw cloudfront_distribution_id)"
+          } >> "$GITHUB_OUTPUT"
 
   # フロントエンドの静的チェック。terraform ジョブとは独立なので並列に走る
   check:
@@ -159,9 +160,7 @@ jobs:
       - name: Sync to S3
         env:
           S3_BUCKET: ${{ needs.terraform.outputs.s3_bucket }}
-        run: |
-          echo "::add-mask::$S3_BUCKET"
-          aws s3 sync ./dist "s3://$S3_BUCKET" --delete
+        run: aws s3 sync ./dist "s3://$S3_BUCKET" --delete
 
       - name: Invalidate CloudFront
         env:
