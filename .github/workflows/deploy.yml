@@ -220,10 +220,12 @@ jobs:
             --exclude 'assets/*' \
             --cache-control 'public, max-age=0, must-revalidate'
 
+      # assets/ はハッシュ付きで immutable 指定のため、内容が変われば URL も変わる。
+      # 無効化が要るのは URL が変わらないエントリポイントだけ
       - name: Invalidate CloudFront
         env:
           DISTRIBUTION_ID: ${{ needs.terraform.outputs.distribution_id }}
         run: |
           aws cloudfront create-invalidation \
             --distribution-id "$DISTRIBUTION_ID" \
-            --paths '/*'
+            --paths '/' '/index.html'
