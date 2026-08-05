@@ -64,7 +64,19 @@ PR に `infra/**` の差分があると `terraform-plan.yml` が動き、plan �
 
 ARN はリポジトリ変数 `TF_PLAN_ROLE_ARN` / `TF_APPLY_ROLE_ARN` / `DEPLOY_ROLE_ARN` で設定する。
 
-apply ロールは `github-actions-*` のロールを操作できるが、自分自身への `UpdateAssumeRolePolicy` や `PutRolePolicy` は明示 Deny で塞いである。信頼ポリシーを書き換えて任意の sub から Assume できるようにする経路を断つため。この結果 apply ロール自体の変更は CI からは行えず、ローカルの管理者権限で apply する必要がある。
+### 権限昇格の遮断
+
+apply ロールは `github-actions-*` のロールを操作できるため、放置すると自分の権限を広げられてしまう。2段構えで塞いである。
+
+**1. 自己変更の明示 Deny** — apply ロール自身への `UpdateAssumeRolePolicy` や `PutRolePolicy` を拒否する。信頼ポリシーを書き換えて任意の `sub` から Assume できるようにする経路を断つため。
+
+**2. permissions boundary** — `github-actions-boundary` ポリシーが、apply ロールの管理するロールが持てる権限の上限を定める。実効権限は「ロールのポリシー ∩ boundary」になる。
+
+boundary には **IAM の書き込みを含めていない**。apply ロールが乗っ取られても、新たな管理者ロールを作って迂回することができない。ロールの新規作成は boundary が付くことを条件にしてのみ許可し、boundary の取り外しも Deny してある。
+
+apply ロール自身には boundary を付けない（IAM 操作が必要なため）。上記1で保護している。
+
+この設計の帰結として、**apply ロール自体と boundary ポリシーの変更は CI からは行えない**。変更する場合はローカルの管理者権限で `terraform apply` する。
 
 ## 補足
 
