@@ -80,6 +80,13 @@ resource "aws_iam_role_policy" "terraform_plan" {
         Effect   = "Allow"
         Action   = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyVersions"]
         Resource = aws_iam_policy.boundary.arn
+      },
+      # アクセスログ関連リソースの refresh に必要
+      {
+        Sid      = "LogsRead"
+        Effect   = "Allow"
+        Action   = ["logs:Get*", "logs:List*", "logs:Describe*"]
+        Resource = "*"
       }
     ]
   })
@@ -133,6 +140,14 @@ resource "aws_iam_role_policy" "terraform_apply" {
         Sid      = "CloudFront"
         Effect   = "Allow"
         Action   = "cloudfront:*"
+        Resource = "*"
+      },
+      # アクセスログの配信設定。Delivery 系のリソースは ARN 単位の指定に
+      # 対応しないため "*"。ログ以外には影響しない
+      {
+        Sid      = "Logs"
+        Effect   = "Allow"
+        Action   = "logs:*"
         Resource = "*"
       },
       # ロールの新規作成と boundary の付け替えは、boundary が付くことを
