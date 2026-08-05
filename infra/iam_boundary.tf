@@ -19,9 +19,12 @@ resource "aws_iam_policy" "boundary" {
       Action = [
         "s3:*",
         "cloudfront:*",
-        # refresh のための読み取りのみ。IAM の書き込みは意図的に含めない
+        # refresh のための読み取りのみ。IAM とログの書き込みは意図的に含めない
         "iam:Get*",
         "iam:List*",
+        "logs:Get*",
+        "logs:List*",
+        "logs:Describe*",
       ]
       Resource = "*"
     }]

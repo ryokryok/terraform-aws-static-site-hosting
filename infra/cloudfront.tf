@@ -32,10 +32,59 @@ resource "aws_cloudfront_function" "spa_rewrite" {
   JS
 }
 
+resource "aws_cloudfront_response_headers_policy" "security" {
+  name    = "frontend-security-headers"
+  comment = "HSTS, nosniff, frame options, referrer policy, CSP"
+
+  security_headers_config {
+    strict_transport_security {
+      access_control_max_age_sec = 31536000
+      include_subdomains         = true
+      # preload は独自ドメインを持ってから。*.cloudfront.net には申請できない
+      preload  = false
+      override = true
+    }
+
+    content_type_options {
+      override = true
+    }
+
+    frame_options {
+      frame_option = "DENY"
+      override     = true
+    }
+
+    referrer_policy {
+      referrer_policy = "strict-origin-when-cross-origin"
+      override        = true
+    }
+
+    # Vite のビルド成果物は外部ファイル参照なので 'self' で足りる。
+    # style-src の unsafe-inline は動的に注入されるスタイル用。
+    # connect-src はアプリが叩く外部 API を明示的に許可する
+    content_security_policy {
+      content_security_policy = join("; ", [
+        "default-src 'self'",
+        "img-src 'self' data:",
+        "style-src 'self' 'unsafe-inline'",
+        "font-src 'self'",
+        "connect-src 'self' https://jsonplaceholder.typicode.com",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "frame-ancestors 'none'",
+      ])
+      override = true
+    }
+  }
+}
+
 resource "aws_cloudfront_distribution" "frontend" {
   enabled             = true
   default_root_object = "index.html"
   price_class         = "PriceClass_200" # 日本を含むエッジロケーション
+
+  # Terraform のデフォルトは false（コンソールは true）
+  is_ipv6_enabled = true
 
   origin {
     domain_name              = aws_s3_bucket.frontend.bucket_regional_domain_name
@@ -53,6 +102,8 @@ resource "aws_cloudfront_distribution" "frontend" {
 
     # Terraform のデフォルトは false。有効にしないと gzip/brotli で配信されない
     compress = true
+
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.security.id
 
     function_association {
       event_type   = "viewer-request"
