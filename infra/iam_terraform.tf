@@ -13,7 +13,8 @@ locals {
 # ---------------------------------------------------------------------------
 
 resource "aws_iam_role" "terraform_plan" {
-  name = "github-actions-terraform-plan"
+  name                 = "github-actions-terraform-plan"
+  permissions_boundary = aws_iam_policy.boundary.arn
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -71,6 +72,13 @@ resource "aws_iam_role_policy" "terraform_plan" {
         Effect   = "Allow"
         Action   = ["iam:GetOpenIDConnectProvider", "iam:ListOpenIDConnectProviders"]
         Resource = "*"
+      },
+      # boundary ポリシーの refresh に必要
+      {
+        Sid      = "IAMPolicyRead"
+        Effect   = "Allow"
+        Action   = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyVersions"]
+        Resource = aws_iam_policy.boundary.arn
       }
     ]
   })
@@ -126,12 +134,24 @@ resource "aws_iam_role_policy" "terraform_apply" {
         Action   = "cloudfront:*"
         Resource = "*"
       },
+      # ロールの新規作成と boundary の付け替えは、boundary が付くことを
+      # 条件にしてのみ許可する。boundary なしのロールを作らせないため
+      {
+        Sid      = "IAMRoleCreateWithBoundary"
+        Effect   = "Allow"
+        Action   = ["iam:CreateRole", "iam:PutRolePermissionsBoundary"]
+        Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/github-actions-*"
+        Condition = {
+          StringEquals = {
+            "iam:PermissionsBoundary" = aws_iam_policy.boundary.arn
+          }
+        }
+      },
       {
         Sid    = "IAMRoles"
         Effect = "Allow"
         Action = [
           "iam:GetRole",
-          "iam:CreateRole",
           "iam:DeleteRole",
           "iam:UpdateAssumeRolePolicy",
           "iam:TagRole",
@@ -158,6 +178,23 @@ resource "aws_iam_role_policy" "terraform_apply" {
           "iam:TagOpenIDConnectProvider"
         ]
         Resource = aws_iam_openid_connect_provider.github.arn
+      },
+      # boundary ポリシーの refresh に必要。書き込みは意図的に与えない。
+      # boundary を緩められると上限そのものが無意味になるため、変更は
+      # ローカルの管理者権限でのみ行う
+      {
+        Sid      = "IAMPolicyRead"
+        Effect   = "Allow"
+        Action   = ["iam:GetPolicy", "iam:GetPolicyVersion", "iam:ListPolicyVersions"]
+        Resource = aws_iam_policy.boundary.arn
+      },
+      # boundary の取り外しを禁止する。付け替えは
+      # IAMRoleCreateWithBoundary の条件により同じ boundary にしかできない
+      {
+        Sid      = "DenyBoundaryRemoval"
+        Effect   = "Deny"
+        Action   = "iam:DeleteRolePermissionsBoundary"
+        Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/github-actions-*"
       },
       # 権限昇格の遮断。IAMRoles は github-actions-* を対象にしており、
       # このロール自身も含まれてしまう。自分の信頼ポリシーを書き換えられると
