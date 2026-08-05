@@ -28,27 +28,38 @@ jobs:
     outputs:
       s3_bucket: ${{ steps.tf_output.outputs.s3_bucket }}
       distribution_id: ${{ steps.tf_output.outputs.distribution_id }}
+      frontend: ${{ steps.targets.outputs.frontend }}
+      infra: ${{ steps.targets.outputs.infra }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
 
-      # infra/ に差分がある場合のみ fmt / validate / apply を走らせる
-      - name: Detect infra changes
+      - name: Detect changes
         id: changes
+        if: github.event_name != 'workflow_dispatch'
+        uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.3
+        with:
+          filters: |
+            infra:
+              - 'infra/**'
+            frontend:
+              - 'src/**'
+              - 'public/**'
+              - 'index.html'
+              - 'vite.config.ts'
+              - 'tsconfig*.json'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+
+      # 手動実行は差分を判定できないため常に対象とみなす。
+      # ジョブ内からは job outputs を参照できないのでここで一度確定させる
+      - name: Resolve targets
+        id: targets
         working-directory: .
         run: |
-          before='${{ github.event.before }}'
-          if [ '${{ github.event_name }}' != 'push' ] || [ -z "$before" ] ||
-             [ "$before" = '0000000000000000000000000000000000000000' ]; then
-            echo 'infra=true' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if git diff --quiet "$before" '${{ github.sha }}' -- infra/; then
-            echo 'infra=false' >> "$GITHUB_OUTPUT"
-          else
-            echo 'infra=true' >> "$GITHUB_OUTPUT"
-          fi
+          {
+            echo 'infra=${{ github.event_name == 'workflow_dispatch' || steps.changes.outputs.infra == 'true' }}'
+            echo 'frontend=${{ github.event_name == 'workflow_dispatch' || steps.changes.outputs.frontend == 'true' }}'
+          } >> "$GITHUB_OUTPUT"
 
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
@@ -56,7 +67,7 @@ jobs:
           terraform_wrapper: false
 
       - name: Terraform fmt
-        if: steps.changes.outputs.infra == 'true'
+        if: steps.targets.outputs.infra == 'true'
         run: terraform fmt -check -recursive
 
       - name: Configure AWS credentials
@@ -69,27 +80,18 @@ jobs:
         run: terraform init -input=false
 
       - name: Terraform validate
-        if: steps.changes.outputs.infra == 'true'
+        if: steps.targets.outputs.infra == 'true'
         run: terraform validate
 
-      # -detailed-exitcode: 0=差分なし / 1=エラー / 2=差分あり
       - name: Terraform plan
-        id: plan
-        if: steps.changes.outputs.infra == 'true'
-        run: |
-          set +e
-          terraform plan -input=false -lock-timeout=5m -detailed-exitcode -out=tfplan
-          code=$?
-          set -e
-          case "$code" in
-            0) echo 'changes=false' >> "$GITHUB_OUTPUT" ;;
-            2) echo 'changes=true'  >> "$GITHUB_OUTPUT" ;;
-            *) exit "$code" ;;
-          esac
+        if: steps.targets.outputs.infra == 'true'
+        run: terraform plan -input=false -lock-timeout=5m -out=tfplan
 
+      # 保存済みプランの適用は確認を求められないため -auto-approve は不要。
+      # 差分がなければ no-op で終わる
       - name: Terraform apply
-        if: steps.plan.outputs.changes == 'true'
-        run: terraform apply -input=false -lock-timeout=5m -auto-approve tfplan
+        if: steps.targets.outputs.infra == 'true'
+        run: terraform apply -input=false -lock-timeout=5m tfplan
 
       # デプロイ先はハードコードせず state から取得する。
       # バケット名にアカウントIDが含まれるのでログ出力をマスクする
@@ -104,6 +106,8 @@ jobs:
 
   deploy:
     needs: terraform
+    # infra 変更でバケットが作り直された場合も再同期が要るため infra も条件に含める
+    if: needs.terraform.outputs.frontend == 'true' || needs.terraform.outputs.infra == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
