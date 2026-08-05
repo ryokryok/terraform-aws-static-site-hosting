@@ -86,6 +86,10 @@ resource "aws_cloudfront_distribution" "frontend" {
   # Terraform のデフォルトは false（コンソールは true）
   is_ipv6_enabled = true
 
+  # QUIC を有効にする。Terraform のデフォルトは "http2"。
+  # パケットロスのある回線で接続確立が速くなる。追加費用はない
+  http_version = "http2and3"
+
   origin {
     domain_name              = aws_s3_bucket.frontend.bucket_regional_domain_name
     origin_id                = "s3-frontend"
