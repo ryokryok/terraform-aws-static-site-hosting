@@ -56,9 +56,10 @@ resource "aws_iam_role_policy" "terraform_plan" {
         ]
       },
       {
-        Sid      = "CloudFrontRead"
-        Effect   = "Allow"
-        Action   = ["cloudfront:Get*", "cloudfront:List*"]
+        Sid    = "CloudFrontRead"
+        Effect = "Allow"
+        # CloudFront Function の refresh は DescribeFunction を使うため Get*/List* では足りない
+        Action   = ["cloudfront:Get*", "cloudfront:List*", "cloudfront:Describe*"]
         Resource = "*"
       },
       {

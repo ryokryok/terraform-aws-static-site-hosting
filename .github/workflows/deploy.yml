@@ -200,10 +200,25 @@ jobs:
           role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Sync to S3
+      # aws s3 sync は Cache-Control を付けないため2段に分ける。
+      # assets/ は Vite がハッシュ付きの名前を出すので不変として長期キャッシュでき、
+      # index.html は毎回再検証させる必要がある。
+      # アセットを先に上げることで、新しい index.html が参照先を欠く時間をなくす
+      - name: Sync assets to S3
         env:
           S3_BUCKET: ${{ needs.terraform.outputs.s3_bucket }}
-        run: aws s3 sync ./dist "s3://$S3_BUCKET" --delete
+        run: |
+          aws s3 sync ./dist "s3://$S3_BUCKET" --delete \
+            --exclude '*' --include 'assets/*' \
+            --cache-control 'public, max-age=31536000, immutable'
+
+      - name: Sync entrypoints to S3
+        env:
+          S3_BUCKET: ${{ needs.terraform.outputs.s3_bucket }}
+        run: |
+          aws s3 sync ./dist "s3://$S3_BUCKET" --delete \
+            --exclude 'assets/*' \
+            --cache-control 'public, max-age=0, must-revalidate'
 
       - name: Invalidate CloudFront
         env:
