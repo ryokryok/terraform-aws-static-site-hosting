@@ -17,6 +17,11 @@
   font: 18px/145% var(--sans);
   letter-spacing: 0.18px;
   color-scheme: light dark;
+
+  /* スクロールバーの領域を常に確保する。
+     /posts のような縦に長いページとそうでないページを行き来したとき、
+     スクロールバーの出現でコンテンツ幅が変わって横にガタつくのを防ぐ */
+  scrollbar-gutter: stable;
   color: var(--text);
   background: var(--bg);
   font-synthesis: none;
