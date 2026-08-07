@@ -149,39 +149,18 @@ jobs:
       - name: Terraform apply
         run: terraform apply -input=false -lock-timeout=5m tfplan
 
-  # フロントエンドの静的チェック。terraform ジョブとは独立なので並列に走る
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
-        with:
-          version: 10
-
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      # 最初の失敗で止めず、3つの結果をまとめて出す
-      - run: pnpm fmt:check
-        if: "!cancelled()"
-      - run: pnpm lint
-        if: "!cancelled()"
-      - run: pnpm typecheck
-        if: "!cancelled()"
-
   deploy:
-    needs: [terraform, check]
+    needs: [terraform]
     # terraform ジョブの失敗ではフロントのデプロイを止めない。
     # デプロイ先が取得できていれば（= state に到達できていれば）実行する。
     # infra 変更でバケットが作り直された場合も再同期が要るため infra も条件に含める
+    #
+    # fmt / lint / typecheck / test は ci.yaml に移した。同じ push で並列に
+    # 走るが、デプロイの前提条件にはしていない。型やフォーマットの不備で
+    # 配信を止めるより、ビルドが通る限り出したいという判断。
+    # ビルド自体が壊れていれば下の pnpm build で止まる
     if: >-
       !cancelled()
-      && needs.check.result == 'success'
       && needs.terraform.outputs.s3_bucket != ''
       && (needs.terraform.outputs.frontend == 'true' || needs.terraform.outputs.infra == 'true')
     runs-on: ubuntu-latest
