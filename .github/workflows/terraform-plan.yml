@@ -23,6 +23,17 @@ env:
 
 jobs:
   plan:
+    # fork からの PR では実行しない。
+    #
+    # このジョブは PR のマージ ref、つまり未信頼のコードを checkout したうえで
+    # terraform init / plan を回す。init はプロバイダを取得して実行するため、
+    # 認証情報を持った状態で他人の PR の infra/** を動かすことになる。
+    #
+    # GitHub は fork の pull_request に OIDC トークンを発行しない（トークンが
+    # read-only に制限され id-token: write が付かない）ため実際には Assume に
+    # 失敗して止まるが、GitHub 側の挙動だけを頼りにはしない。
+    # 併せて、fork PR ごとにジョブが失敗して赤くなるのも避ける
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     defaults:
       run:
