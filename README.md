@@ -41,7 +41,8 @@ flowchart TD
     Detect --> TF["terraform<br/>fmt / validate / plan"]
     Detect --> Check["check<br/>fmt / lint / typecheck"]
 
-    TF -->|"infra に差分あり"| Apply["terraform-apply<br/>environment: production"]
+    TF -->|"infra に差分あり"| Gate{{"承認待ち<br/>environment: production"}}
+    Gate -->|"オーナーが承認"| Apply["terraform-apply"]
     TF --> Dep["deploy"]
     Check --> Dep
 
@@ -73,7 +74,7 @@ flowchart LR
     Boundary["permissions boundary<br/>IAM 書き込みを含まない"]
 
     JobPlan -->|"pull_request<br/>refs/heads/main"| OIDC
-    JobApply -->|"environment:production"| OIDC
+    JobApply -->|"environment:production<br/>承認後のみ発行"| OIDC
     JobDeploy -->|"refs/heads/main"| OIDC
 
     OIDC --> RPlan
@@ -137,7 +138,15 @@ state は S3 で共有されており、ローカルと CI が同じものを参
 
 手動実行のトリガーは持たせていない。再デプロイしたい場合は Actions 画面から過去のランを re-run する（`gh run rerun <run-id>` でも可）。差分判定はそのランのコミットに対して再計算されるため、デプロイまで到達したランを選べば同じ内容が再度反映される。
 
-PR に `infra/**` の差分があると `terraform-plan.yml` が動き、plan の結果が PR にコメントされる。読み取り専用ロールで実行するため、この時点で AWS が変更されることはない。
+PR に `infra/**` の差分があると `terraform-plan.yml` が動き、plan の結果が PR にコメントされる。読み取り専用ロールで実行するため、この時点で AWS が変更されることはない。fork からの PR では実行しない（未信頼のコードに対して `terraform init` を回さないため）。
+
+### apply の承認ゲート
+
+`infra/**` に差分がある場合、`terraform-apply` ジョブは `production` Environment の承認待ちで停止する。Actions 画面から承認するまで進まない。
+
+これは単なる確認ダイアログではない。apply ロールの信頼ポリシーは `sub = environment:production` を要求しており、**このトークンは承認後にしか発行されない**。承認前の状態では AWS への書き込み権限そのものが存在しない。ブランチ参照による制限より強い。
+
+承認者はリポジトリオーナー。単独運用のため self-review は許可してある（禁止すると誰も承認できず apply が永久に止まる）。
 
 ### ロール構成
 
@@ -170,7 +179,6 @@ apply ロール自身には boundary を付けない（IAM 操作が必要なた
 | 項目                             | 理由                                                                                           |
 | -------------------------------- | ---------------------------------------------------------------------------------------------- |
 | 独自ドメイン + ACM 証明書        | ドメイン未取得。`us_east_1` プロバイダエイリアスは用意済み                                     |
-| Environment の承認者ゲート       | private リポジトリでは GitHub Pro 以上が必要。ブランチポリシーで `main` に限定して代替している |
 | CloudWatch アラームと通知        | 通知先が必要。現状は 5xx の増加に気づく手段がない                                              |
 | WAF                              | 静的サイトでは費用に見合いにくい                                                               |
 | state バケットの別アカウント分離 | 単一アカウント運用のため                                                                       |

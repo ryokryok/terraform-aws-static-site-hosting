@@ -106,7 +106,14 @@ jobs:
   # 書き込みを伴う唯一のジョブ。environment: production を宣言することで
   # apply ロールの信頼ポリシー（sub = environment:production）を満たす。
   # Environment 側でブランチを main に限定しているため、他ブランチから
-  # このジョブを宣言してもトークンが発行されない
+  # このジョブを宣言してもトークンが発行されない。
+  #
+  # さらに required reviewers を設定してあり、承認するまでこのジョブは
+  # 停止する。承認前は OIDC トークンが発行されない、つまり AWS への書き込み
+  # 権限そのものが存在しない状態になる。確認ダイアログではなく権限の境界。
+  #
+  # なお deploy ジョブはこのジョブに依存していないため、承認待ちで
+  # フロントエンドのリリースが止まることはない
   terraform-apply:
     needs: terraform
     if: needs.terraform.outputs.infra == 'true'
