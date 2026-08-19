@@ -30,28 +30,34 @@ S3 はバケットポリシーで、この CloudFront ディストリビュー�
 
 ### CI/CD
 
+ワークフローは3本。認証情報を必要とするかどうかで分かれている。
+
 ```mermaid
 flowchart TD
+    Push["どのブランチへの push でも"] --> CI["ci.yaml<br/>AWS 認証情報なし"]
+    CI --> Front["frontend<br/>fmt / lint / typecheck / test"]
+    CI --> TfCheck["terraform<br/>fmt -check / validate"]
+
     PR["PR<br/>infra/** に差分"] --> Plan["terraform-plan.yml"]
     Plan -->|"読み取り専用ロール"| PlanOut["plan の差分を<br/>PR にコメント"]
 
     Merge["main への push"] --> Deploy["deploy.yml"]
 
     Deploy --> Detect["変更検出<br/>paths-filter"]
-    Detect --> TF["terraform<br/>fmt / validate / plan"]
-    Detect --> Check["check<br/>fmt / lint / typecheck"]
+    Detect --> TF["terraform<br/>plan"]
 
     TF -->|"infra に差分あり"| Gate{{"承認待ち<br/>environment: production"}}
     Gate -->|"オーナーが承認"| Apply["terraform-apply"]
     TF --> Dep["deploy"]
-    Check --> Dep
 
     Dep --> Build["pnpm build"]
     Build --> Sync["S3 同期<br/>Cache-Control 付与"]
     Sync --> Inv["CloudFront 無効化<br/>エントリポイントのみ"]
 ```
 
-`deploy` は `terraform` の**成功**ではなく**デプロイ先の取得**に依存する。インフラの適用が失敗してもフロントエンドのリリースは止まらない。
+`ci.yaml` は AWS に一切触れない。`terraform validate` は `-backend=false` で init するため state も認証情報も要らず、構文と型の検査だけを行う。これにより全ブランチの push で無条件に走らせられる。
+
+`deploy` は `terraform` の**成功**ではなく**デプロイ先の取得**に依存する。インフラの適用が失敗してもフロントエンドのリリースは止まらない。同様に `ci.yaml` の結果にも依存しない（並列に走る）。ビルドが壊れていれば `pnpm build` で止まる。
 
 ### IAM
 
@@ -117,8 +123,12 @@ terraform init        # S3 backend への接続を初期化
 pnpm dev              # 開発サーバー
 pnpm build            # dist/ にビルド
 pnpm lint             # oxlint
-pnpm fmt              # oxfmt
+pnpm fmt              # oxfmt（Markdown も整形対象）
+pnpm typecheck        # tsc -b
+pnpm test             # vitest run
 ```
+
+`pnpm fmt:check` / `lint` / `typecheck` / `test` は `ci.yaml` が全ブランチの push で実行する。手元で通しておけば CI で落ちない。
 
 ## インフラ変更
 
